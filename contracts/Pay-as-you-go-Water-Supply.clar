@@ -298,3 +298,113 @@
         (as-contract (stx-transfer? (stx-get-balance tx-sender) tx-sender CONTRACT-OWNER))
     )
 )
+
+(define-map usage-delegations
+    {
+        meter-id: uint,
+        delegate: principal,
+    }
+    {
+        remaining: uint,
+        enabled: bool,
+    }
+)
+
+(define-read-only (get-usage-delegation
+        (meter-id uint)
+        (delegate principal)
+    )
+    (map-get? usage-delegations {
+        meter-id: meter-id,
+        delegate: delegate,
+    })
+)
+
+(define-public (set-usage-delegation
+        (meter-id uint)
+        (delegate principal)
+        (allowance uint)
+    )
+    (let ((meter-data (unwrap! (get-water-meter meter-id) ERR-NOT-FOUND)))
+        (asserts! (is-meter-owner meter-id tx-sender) ERR-UNAUTHORIZED)
+        (asserts! (> allowance u0) ERR-INVALID-AMOUNT)
+        (map-set usage-delegations {
+            meter-id: meter-id,
+            delegate: delegate,
+        } {
+            remaining: allowance,
+            enabled: true,
+        })
+        (ok true)
+    )
+)
+
+(define-public (revoke-usage-delegation
+        (meter-id uint)
+        (delegate principal)
+    )
+    (let ((meter-data (unwrap! (get-water-meter meter-id) ERR-NOT-FOUND)))
+        (asserts! (is-meter-owner meter-id tx-sender) ERR-UNAUTHORIZED)
+        (map-set usage-delegations {
+            meter-id: meter-id,
+            delegate: delegate,
+        } {
+            remaining: u0,
+            enabled: false,
+        })
+        (ok true)
+    )
+)
+
+(define-public (record-usage-delegate
+        (meter-id uint)
+        (usage-amount uint)
+    )
+    (let (
+            (meter-data (unwrap! (get-water-meter meter-id) ERR-NOT-FOUND))
+            (delegation (unwrap!
+                (map-get? usage-delegations {
+                    meter-id: meter-id,
+                    delegate: tx-sender,
+                })
+                ERR-UNAUTHORIZED
+            ))
+            (current-block u0)
+            (usage-cost (calculate-usage-cost usage-amount (get rate-per-liter meter-data)))
+            (owner (get owner meter-data))
+            (user-balance (get-user-balance owner))
+            (remaining (get remaining delegation))
+        )
+        (asserts! (get active meter-data) ERR-METER-NOT-ACTIVE)
+        (asserts! (> usage-amount u0) ERR-INVALID-AMOUNT)
+        (asserts! (get enabled delegation) ERR-UNAUTHORIZED)
+        (asserts! (>= user-balance usage-cost) ERR-INSUFFICIENT-BALANCE)
+        (asserts! (>= remaining usage-cost) ERR-INSUFFICIENT-FUNDS)
+        (map-set user-balances { user: owner } { balance: (- user-balance usage-cost) })
+        (map-set water-meters { meter-id: meter-id } {
+            owner: owner,
+            balance: (get balance meter-data),
+            usage: (+ (get usage meter-data) usage-amount),
+            last-reading: usage-amount,
+            rate-per-liter: (get rate-per-liter meter-data),
+            active: (get active meter-data),
+            created-at: (get created-at meter-data),
+        })
+        (map-set usage-delegations {
+            meter-id: meter-id,
+            delegate: tx-sender,
+        } {
+            remaining: (- remaining usage-cost),
+            enabled: true,
+        })
+        (map-set usage-history {
+            meter-id: meter-id,
+            block-num: current-block,
+        } {
+            usage-amount: usage-amount,
+            cost: usage-cost,
+            timestamp: current-block,
+        })
+        (ok usage-cost)
+    )
+)
