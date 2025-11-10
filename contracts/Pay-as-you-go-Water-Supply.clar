@@ -8,6 +8,7 @@
 (define-constant ERR-UNAUTHORIZED (err u106))
 (define-constant ERR-INVALID-RATE (err u107))
 (define-constant ERR-INSUFFICIENT-FUNDS (err u108))
+(define-constant ERR-INVALID-THRESHOLD (err u109))
 
 (define-data-var base-rate uint u50)
 (define-data-var service-fee uint u10)
@@ -62,6 +63,11 @@
 )
 
 (define-data-var next-payment-id uint u1)
+
+(define-map balance-thresholds
+    { user: principal }
+    { threshold: uint }
+)
 
 (define-read-only (get-contract-owner)
     CONTRACT-OWNER
@@ -129,6 +135,19 @@
     (match (get-water-meter meter-id)
         meter (is-eq (get owner meter) user)
         false
+    )
+)
+
+(define-read-only (get-balance-threshold (user principal))
+    (default-to u0 (get threshold (map-get? balance-thresholds { user: user })))
+)
+
+(define-read-only (is-balance-below-threshold (user principal))
+    (let (
+            (current-balance (get-user-balance user))
+            (threshold (get-balance-threshold user))
+        )
+        (and (> threshold u0) (< current-balance threshold))
     )
 )
 
@@ -296,6 +315,20 @@
     (begin
         (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-OWNER-ONLY)
         (as-contract (stx-transfer? (stx-get-balance tx-sender) tx-sender CONTRACT-OWNER))
+    )
+)
+
+(define-public (set-balance-threshold (threshold uint))
+    (begin
+        (map-set balance-thresholds { user: tx-sender } { threshold: threshold })
+        (ok threshold)
+    )
+)
+
+(define-public (remove-balance-threshold)
+    (begin
+        (map-delete balance-thresholds { user: tx-sender })
+        (ok true)
     )
 )
 
